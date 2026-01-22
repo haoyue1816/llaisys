@@ -55,7 +55,7 @@ void rearrange_(T *out, const T *in, size_t numel,
         out[out_offset] = in[in_offset];
 
         // Increment indices (like odometer)
-        for (int dim = ndim - 1; dim >= 0; dim--) {
+        for (int dim = static_cast<int>(ndim) - 1; dim >= 0; dim--) {
             in_indices[dim]++;
             out_indices[dim]++;
             if (out_indices[dim] < shape[dim]) {
