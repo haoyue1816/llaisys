@@ -145,5 +145,16 @@ if __name__ == "__main__":
     print(f"Time elapsed: {(end_time - start_time):.2f}s\n")
 
     if args.test:
-        assert llaisys_tokens == tokens
-        print("\033[92mTest passed!\033[0m\n")
+        if llaisys_tokens == tokens:
+            print("\033[92mTest passed!\033[0m\n")
+        else:
+            print("\033[91mTest failed!\033[0m\n")
+            print(f"Expected tokens: {tokens}")
+            print(f"Got tokens:      {llaisys_tokens}")
+            # 找到第一个不同的位置
+            for i, (e, g) in enumerate(zip(tokens, llaisys_tokens)):
+                if e != g:
+                    print(f"First difference at position {i}: expected {e}, got {g}")
+                    break
+            if len(tokens) != len(llaisys_tokens):
+                print(f"Length mismatch: expected {len(tokens)}, got {len(llaisys_tokens)}")

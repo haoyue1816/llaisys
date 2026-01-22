@@ -164,42 +164,189 @@ void Tensor::debug() const {
 }
 
 bool Tensor::isContiguous() const {
-    TO_BE_IMPLEMENTED();
+    size_t ndim_ = this->ndim();
+
+    // 0维张量总是连续的
+    if (ndim_ == 0) {
+        return true;
+    }
+
+    // strides 是按元素个数计算的，不是字节数
+    // 对于连续张量，最后一维的 stride 应该等于 1（一个元素）
+    if (_meta.strides[ndim_ - 1] != 1) {
+        return false;
+    }
+
+    // 检查其他维度：strides[i] 应该等于 strides[i+1] * shape[i+1]
+    for (size_t i = 0; i < ndim_ - 1; i++) {
+        ptrdiff_t expected_stride = _meta.strides[i + 1] * static_cast<ptrdiff_t>(_meta.shape[i + 1]);
+        if (_meta.strides[i] != expected_stride) {
+            return false;
+        }
+    }
+
     return true;
 }
 
 tensor_t Tensor::permute(const std::vector<size_t> &order) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    // 步骤1：验证 order 的有效性
+    size_t ndim_ = this->ndim();
+
+    // 检查 order 长度是否匹配维度数
+    if (order.size() != ndim_) {
+        throw std::runtime_error("permute() order length does not match tensor dimensions");
+    }
+
+    // 检查 order 是否包含所有维度 [0, 1, 2, ..., ndim-1]
+    std::vector<bool> seen(ndim_, false);
+    for (size_t i = 0; i < ndim_; i++) {
+        if (order[i] >= ndim_) {
+            throw std::runtime_error("permute() order contains invalid dimension");
+        }
+        seen[order[i]] = true;
+    }
+
+    for (size_t i = 0; i < ndim_; i++) {
+        if (!seen[i]) {
+            throw std::runtime_error("permute() order missing dimension");
+        }
+    }
+
+    // 步骤2：根据 order 重新排列 shape
+    std::vector<size_t> new_shape(ndim_);
+    for (size_t i = 0; i < ndim_; i++) {
+        new_shape[i] = _meta.shape[order[i]];
+    }
+
+    // 步骤3：根据 order 重新排列 strides
+    std::vector<ptrdiff_t> new_strides(ndim_);
+    for (size_t i = 0; i < ndim_; i++) {
+        new_strides[i] = _meta.strides[order[i]];
+    }
+
+    // 步骤4：创建新的 TensorMeta
+    TensorMeta new_meta;
+    new_meta.dtype = _meta.dtype;
+    new_meta.shape = new_shape;
+    new_meta.strides = new_strides;
+
+    // 步骤5：创建新张量，复用同一块 storage（不复制数据）
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
 
 tensor_t Tensor::view(const std::vector<size_t> &shape) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    // 步骤1：计算新形状的元素总数
+    size_t new_numel = std::accumulate(shape.begin(), shape.end(), size_t(1), std::multiplies<size_t>());
+
+    // 步骤2：检查元素总数是否相同
+    if (new_numel != this->numel()) {
+        printf("ERROR: view() numel mismatch! Current shape: [");
+        for (size_t i = 0; i < _meta.shape.size(); i++) {
+            printf("%zu%s", _meta.shape[i], i < _meta.shape.size() - 1 ? ", " : "");
+        }
+        printf("] = %zu, Requested shape: [", this->numel());
+        for (size_t i = 0; i < shape.size(); i++) {
+            printf("%zu%s", shape[i], i < shape.size() - 1 ? ", " : "");
+        }
+        printf("] = %zu\n", new_numel);
+        throw std::runtime_error("view() shape does not match total number of elements");
+    }
+
+    // 步骤3：计算新的 strides（从后往前）
+    size_t ndim_ = shape.size();
+    std::vector<ptrdiff_t> new_strides(ndim_);
+
+    size_t stride = 1;
+    for (size_t i = 1; i <= ndim_; i++) {
+        new_strides[ndim_ - i] = stride;
+        stride *= shape[ndim_ - i];
+    }
+
+    // 步骤4：创建新的 TensorMeta
+    TensorMeta new_meta;
+    new_meta.dtype = _meta.dtype;
+    new_meta.shape = shape;
+    new_meta.strides = new_strides;
+
+    // 步骤5：创建新张量，复用同一块 storage（不复制数据）
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, _offset));
 }
 
 tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    // 步骤1：验证参数
+    size_t ndim_ = this->ndim();
+
+    // 检查 dim 是否有效
+    if (dim >= ndim_) {
+        throw std::runtime_error("slice() dim is out of bounds");
+    }
+
+    // 检查 start 是否小于 end
+    if (start >= end) {
+        throw std::runtime_error("slice() start must be less than end");
+    }
+
+    // 检查 end 是否超出范围
+    if (end > _meta.shape[dim]) {
+        throw std::runtime_error("slice() end is out of bounds");
+    }
+
+    // 步骤2：计算新的 shape
+    std::vector<size_t> new_shape = _meta.shape;
+    new_shape[dim] = end - start;
+
+    // 步骤3：计算新的 offset（字节数）
+    // strides 是按元素个数计算的，需要乘以 elementSize 转换为字节数
+    size_t new_offset = _offset + start * _meta.strides[dim] * this->elementSize();
+
+    // 步骤4：创建新的 TensorMeta
+    // strides 保持不变
+    TensorMeta new_meta;
+    new_meta.dtype = _meta.dtype;
+    new_meta.shape = new_shape;
+    new_meta.strides = _meta.strides;
+
+    // 步骤5：创建新张量，使用新的 offset
+    return std::shared_ptr<Tensor>(new Tensor(new_meta, _storage, new_offset));
 }
 
 void Tensor::load(const void *src_) {
-    TO_BE_IMPLEMENTED();
+    // 设置设备上下文
+    core::context().setDevice(this->deviceType(), this->deviceId());
+
+    // 计算要复制的字节数
+    size_t bytes = this->numel() * this->elementSize();
+
+    // 从主机（CPU）复制数据到设备
+    core::context().runtime().api()->memcpy_sync(
+        this->data(),           // 目标：张量数据
+        src_,                   // 源：CPU数据
+        bytes,                  // 字节数
+        LLAISYS_MEMCPY_H2D      // Host to Device
+    );
 }
 
 tensor_t Tensor::contiguous() const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    // 简化实现：如果已经是连续的，返回自己；否则创建连续副本
+    if (this->isContiguous()) {
+        return std::shared_ptr<Tensor>(new Tensor(_meta, _storage, _offset));
+    }
+    // TODO: 实现真正的连续化操作
+    throw std::runtime_error("contiguous() not fully implemented");
 }
 
 tensor_t Tensor::reshape(const std::vector<size_t> &shape) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    // reshape 类似于 view，但可以处理非连续张量
+    // 简化实现：只支持连续张量
+    if (!this->isContiguous()) {
+        throw std::runtime_error("reshape() only implemented for contiguous tensors");
+    }
+    return this->view(shape);
 }
 
 tensor_t Tensor::to(llaisysDeviceType_t device_type, int device) const {
-    TO_BE_IMPLEMENTED();
-    return std::shared_ptr<Tensor>(new Tensor(_meta, _storage));
+    // TODO: 实现设备转换
+    throw std::runtime_error("to() not implemented");
 }
 
 } // namespace llaisys
